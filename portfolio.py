@@ -92,7 +92,7 @@ class Portfolio(object):
         p_hist["t_chg"] = raw["Change Pct"].to_list()
         p_hist["t_chg_sum"] = p_hist["t_chg"].cumsum()
         p_hist["diff"] = p_hist["p_chg"] - p_hist["t_chg"]
-        p_hist["diff_sum"] = p_hist["diff"] - p_hist["diff"]
+        p_hist["diff_sum"] = p_hist["diff"].cumsum()
         return p_hist
 
     def plot_compare_to(self, ticker, p_type):
