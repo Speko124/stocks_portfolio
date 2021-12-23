@@ -108,11 +108,11 @@ class Portfolio(object):
         })
 
         fig, axes = plt.subplots(2, 2, sharex=True, figsize=(20, 10))
-        fig.suptitle(f'comparing protfolio to {ticker} in the last M')
+        fig.suptitle(f'Comparing Portfolio to {ticker} in the last M')
         axes[0][0].set_title('Daily Change')
         axes[0][1].set_title('Accumulated change (from the last M)')
-        axes[1][0].set_title('Daily Chnage Differnce (+ -> protfolio is better)')
-        axes[1][1].set_title('Accumulated Chnage Differnce (+ -> protfolio is better)')
+        axes[1][0].set_title('Daily Change Difference (+ -> portfolio is better)')
+        axes[1][1].set_title('Accumulated Change Difference (+ -> portfolio is better)')
 
         sns.lineplot(data=data[["protf_chg", f"{ticker}_chg"]], ax=axes[0][0], palette="rocket", linewidth=2.5, )
         sns.lineplot(data=data[["protf_chg_sum", f"{ticker}_chg_sum"]], ax=axes[0][1], palette="rocket",
@@ -132,4 +132,3 @@ class Portfolio(object):
         sns.lineplot(data=data[["p_chg", ]], ax=axes[0], palette="rocket", linewidth=2.5, )
         sns.lineplot(data=data[["p_sum"]], ax=axes[1], palette="tab10", linewidth=2.5, )
         plt.show()
-
