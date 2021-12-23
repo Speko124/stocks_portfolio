@@ -17,6 +17,7 @@ class Portfolio(object):
     def __init__(self):
         self._assets = dict()
         self._hist_value = pd.DataFrame()
+        self._tickers_hist = dict()
 
     @staticmethod
     def _p_type_multi(p_type):
@@ -51,6 +52,11 @@ class Portfolio(object):
             search_result = investpy.search_quotes(text=ticker, products=[self._p_type_multi(product_type)],
                                                    countries=['united states'], n_results=1)
             raw = search_result.retrieve_recent_data()
+            # update each ticker params
+            self._tickers_hist[ticker] = raw.copy()[["Close", "Change Pct"]]
+            self._tickers_hist[ticker]["gain"] = self._tickers_hist[ticker]["Close"] - asset.price
+            self._tickers_hist[ticker]["gain_pct"] = round(self._tickers_hist[ticker]["gain"] * 100 / asset.price, 2)
+
             if idx == 0:
                 dss = raw.index.values
                 ds_parsed = [pd.to_datetime(str(i)).strftime('%Y-%m-%d') for i in dss]
@@ -76,6 +82,9 @@ class Portfolio(object):
             chg = round((curr_sum - prev_sum) * 100 / prev_sum, 2)
             res.append(chg)
         self._hist_value["p_chg"] = res
+
+    def refresh(self):
+        self.calc_hist()
 
     def compare_to(self, ticker, p_type):
         try:
@@ -132,3 +141,14 @@ class Portfolio(object):
         sns.lineplot(data=data[["p_chg", ]], ax=axes[0], palette="rocket", linewidth=2.5, )
         sns.lineplot(data=data[["p_sum"]], ax=axes[1], palette="tab10", linewidth=2.5, )
         plt.show()
+
+    def basic_analysis(self):
+        if len(self._hist_value) == 0:
+            self.calc_hist()
+        res = []
+        col_names = ["ticker", "buy_price", "Close", "Change Pct", "gain", "gain_pct"]
+        for t, df_hist in self._tickers_hist.items():
+            row = [t, self._assets[t].price]
+            row.extend(df_hist.iloc[-1][["Close", "Change Pct", "gain", "gain_pct"]].to_list())
+            res.append(row)
+        return pd.DataFrame(res, columns=col_names).sort_values("gain_pct", ascending=False)

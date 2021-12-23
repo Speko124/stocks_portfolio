@@ -12,3 +12,5 @@ print(p.compare_to("S&P 500", "index"))
 p.plot_compare_to("S&P 500", "index")
 
 p.plot_hist()
+
+print(p.basic_analysis())
