@@ -55,7 +55,8 @@ class Portfolio(object):
             # update each ticker params
             self._tickers_hist[ticker] = raw.copy()[["Close", "Change Pct"]]
             self._tickers_hist[ticker]["gain_per_share"] = self._tickers_hist[ticker]["Close"] - asset.price
-            self._tickers_hist[ticker]["gain_pct"] = round(self._tickers_hist[ticker]["gain_per_share"] * 100 / asset.price, 2)
+            self._tickers_hist[ticker]["gain_pct"] = round(
+                self._tickers_hist[ticker]["gain_per_share"] * 100 / asset.price, 2)
 
             if idx == 0:
                 dss = raw.index.values
