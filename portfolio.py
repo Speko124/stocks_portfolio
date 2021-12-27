@@ -1,10 +1,145 @@
+import datetime
+import json
+import urllib.request
 from dataclasses import dataclass
+from urllib.error import HTTPError
 
 import investpy
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 import yfinance as yf
+from bs4 import BeautifulSoup as bs
+from requests_html import HTMLSession
+
+
+def parse_action(x):
+    if x.lower() == "upgrade":
+        return "positive"
+    if x.lower() == "downgrade":
+        return "negative"
+    return "neutral"
+
+
+def parse_rating(x):
+    actions = [w.strip().lower() for w in x.split("→")]
+    last_action = actions[-1]
+    positive = ["buy", "peer perform", "strong buy", "outperform", "underweight"]
+    neutral = ["hold", "neutral", "equal weight", "mkt perform", "in-line", "market perform"]
+    negative = ["overweight", "underperform", "mkt outperform", "sell", "strong sell"]
+    if last_action in positive:
+        return "positive"
+    if last_action in negative:
+        return "negative"
+    if last_action in neutral:
+        return "neutral"
+
+
+def price_parse(x):
+    if not x:
+        return None
+    if type(x) == str:
+        prices = [float(w.strip().replace("$", "")) for w in x.split("→")]
+        return prices
+    return x
+
+
+def last_price(x):
+    prices = price_parse(x)
+    if not prices:
+        return None
+    if type(prices) == list:
+        return prices[-1]
+    return prices
+
+
+def price_direction(x):
+    prices = price_parse(x)
+    if not prices:
+        return None
+    if type(x) != str:
+        return x
+    if len(prices) == 1:
+        return "no change"
+    if prices[0] > prices[1]:
+        return "negative"
+    if prices[0] < prices[1]:
+        return "positive"
+    return "no_change"
+
+
+def process_finviz_analyst_rec(ticker):
+    url = f'https://finviz.com/quote.ashx?t={ticker}&ty=c&ta=1&p=d'
+    session = HTMLSession()
+    r = session.get(url)
+    soup = bs(r.content, 'html5lib')
+    try:
+        df = pd.read_html(str(soup.find('table', class_='fullview-ratings-outer')))[0]
+    except (ConnectionError, ValueError):
+        return pd.DataFrame([])
+    df = df.iloc[range(1, len(df), 2)]
+    df.columns = ['date', 'action', 'rating_institution', 'rating', 'price_target']
+    df["action"] = df["action"].apply(parse_action)
+    df["rating"] = df["rating"].apply(parse_rating)
+    df["price_dir"] = df["price_target"].apply(price_direction)
+    df["price_target"] = df["price_target"].apply(last_price)
+    df["date"] = pd.to_datetime(df["date"])
+
+    return df
+
+
+def calc_finviz_agg_values(signals):
+    pos = {"buy", "less_volatility", "oversold", "positive"}
+    neg = {"sell", "volatile", "overbought", "negative"}
+    neutral = {'neutral', 'hold', "no change"}
+    counter = {}
+    for s in signals:
+        if s in pos:
+            counter["p"] = counter.get("p", 0) + 1
+        elif s in neg:
+            counter["n"] = counter.get("n", 0) + 1
+        elif s in neutral:
+            counter["neutral"] = counter.get("natural", 0) + 1
+        else:
+            counter["neutral"] = counter.get("natural", 0) + 1
+    p = counter.get("p", 0)
+    n = counter.get("n", 0)
+    neutral = counter.get("neutral", 0)
+    _all = p + n + neutral
+    if _all == 0:
+        return None
+    if _all == 1:
+        _all = 3
+    fin_score = p - n
+    fin_score_conf = abs(fin_score) / _all
+    if fin_score > 0:
+        if fin_score_conf > 0.5:
+            return "strong pos"
+        return "pos"
+    if fin_score == 0:
+        return "neutral"
+    if fin_score < 0:
+        if fin_score_conf > 0.5:
+            return "strong neg"
+        return "neg"
+
+
+def gen_fin_viz_recommendation(ticker, days_back=30):
+    col_names = ["fin_act", "fin_rating", "fin_price_dir", "fin_price_tgt"]
+    df = process_finviz_analyst_rec(ticker)
+    if len(df) == 0:
+        return col_names, [None, None, None, None]
+    start_date = datetime.date.today() + datetime.timedelta(-days_back)
+    df = df[df['date'] > pd.to_datetime(start_date)]
+    if len(df) == 0:
+        return col_names, [None, None, None, None]
+    values = [
+        calc_finviz_agg_values(df["action"].to_list()),
+        calc_finviz_agg_values(df["rating"].to_list()),
+        calc_finviz_agg_values(df["price_dir"].to_list()),
+        round(df["price_target"].mean(), 2)
+    ]
+    return col_names, values
 
 
 @dataclass
@@ -22,6 +157,7 @@ class Portfolio(object):
         self._tickers_hist = dict()
 
     def buy(self, ticker, p_type, amount, price):
+        ticker = ticker.upper()
         if ticker in self._assets:
             asset = self._assets[ticker]
             self._assets[ticker].price = (asset.amount * asset.price + amount * price) / (asset.amount + amount)
@@ -30,6 +166,7 @@ class Portfolio(object):
             self._assets[ticker] = StockData(ticker=ticker, price=price, amount=amount, p_type=p_type)
 
     def sell(self, ticker, amount):
+        ticker = ticker.upper()
         if ticker in self._assets:
             asset = self._assets[ticker]
             self._assets[ticker].amount = asset.amount - amount if (asset.amount - amount) >= 0 else 0
@@ -148,12 +285,15 @@ class Portfolio(object):
         if len(self._hist_value) == 0:
             self.calc_hist()
         res = []
-        col_names = ["ticker", "buy_price", "Close", "Change Pct", "gain_per_share", "gain_pct"]
+        col_names = ["ds", "ticker", "buy_price", "Close", "Change Pct", "gain_per_share", "gain_pct"]
+        ds = self._hist_value.iloc[-1]["ds"]
         for t, df_hist in self._tickers_hist.items():
-            row = [t, self._assets[t].price]
+            row = [ds, t, self._assets[t].price]
             row.extend(df_hist.iloc[-1][["Close", "Change Pct", "gain_per_share", "gain_pct"]].to_list())
             res.append(row)
-        return pd.DataFrame(res, columns=col_names).sort_values("gain_pct", ascending=False)
+        res_df = pd.DataFrame(res, columns=col_names)
+        res_df.columns = [c.lower().replace(" ", "_") for c in res_df.columns]
+        return res_df.sort_values("change_pct", ascending=False)
 
     @staticmethod
     def _p_type_multi(p_type):
@@ -228,17 +368,38 @@ class Portfolio(object):
     @staticmethod
     def _gen_yf_recommendation(ticker):
         try:
-            return yf.Ticker(ticker.upper()).info.get("recommendationKey")
+            return yf.Ticker(ticker.upper()).info.get("recommendationKey", None)
         except (RuntimeError, ConnectionError, ValueError):
             return None
+
+    @staticmethod
+    def _gen_zacks_recommendation(ticker):
+        ticker = ticker.upper()
+        url = 'https://quote-feed.zacks.com/index?t=' + ticker
+        try:
+            j = json.loads(urllib.request.urlopen(url).read().decode())
+        except HTTPError:
+            return None
+        res = j[ticker].get("zacks_rank_text", None)
+        if type(res) == str:
+            res = res.lower()
+        return res
 
     def gen_recommendations(self):
         names = []
         res = []
         for a in self._assets.values():
-            n, v = self._get_investing_tech_data_intervals(t=a.ticker, intervals=["daily", "weekly", "monthly"],
-                                                           p_type=a.p_type)
-            names = ["ticker"] + ["yf"] + n
-            v = [a.ticker.upper()] + [self._gen_yf_recommendation(a.ticker)] + v
+            inves_n, inves_v = self._get_investing_tech_data_intervals(t=a.ticker,
+                                                                       intervals=["daily", "weekly", "monthly"],
+                                                                       p_type=a.p_type)
+            f_n, f_v = gen_fin_viz_recommendation(a.ticker, days_back=30)
+            ds = self._hist_value.iloc[-1]["ds"]
+            names = ["ds", "ticker", "yf", "zacks"] + inves_n + f_n
+            v = [
+                    ds,
+                    a.ticker.upper(),
+                    self._gen_yf_recommendation(a.ticker),
+                    self._gen_zacks_recommendation(a.ticker)] + \
+                inves_v + f_v
             res.append(v)
         return pd.DataFrame(res, columns=names)
